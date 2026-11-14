@@ -2777,7 +2777,6 @@
       function hideInstallForNative() {
         if (!IS_NATIVE_APP) return;
         [pwaBtn, pwaBtn2, pwaBtn3, iosBtn].forEach((b) => { if (b) b.style.display = "none"; });
-        $$('[data-nav="download"]').forEach((b) => { b.style.display = "none"; });
       }
       hideInstallForNative();
       function markInstalled() {
@@ -6820,20 +6819,35 @@
    Di browser/PWA seluruh blok ini tidak aktif (no-op).
    ============================================================ */
 (function () {
-  var Cap = window.Capacitor;
-  if (!Cap) return;
-  /* Bundle JS plugin (dist/plugin.js) tidak pernah dimuat di halaman
-     statis ini, jadi daftarkan plugin secara MANUAL lewat registerPlugin
-     bawaan core Capacitor: core membuat proxy-nya di Cap.Plugins dan
-     setiap panggilan metode diteruskan ke implementasi native lewat
-     PluginHeaders. Tanpa ini kedua plugin di bawah tidak ada dan bridge
-     berhenti di pemeriksaan berikutnya. */
-  try { if (typeof Cap.registerPlugin === 'function') { if (!Cap.Plugins) Cap.Plugins = {}; if (!Cap.Plugins.NativeAudio) Cap.registerPlugin('NativeAudio'); if (!Cap.Plugins.MediaSession) Cap.registerPlugin('MediaSession'); } } catch (e) {}
-  if (!Cap.Plugins || !Cap.Plugins.NativeAudio || !Cap.Plugins.MediaSession) return;
-  var NA = Cap.Plugins.NativeAudio;
-  var MS = Cap.Plugins.MediaSession;
   function noop() {}
   function dlog(msg) { try { if (typeof diagLog === 'function') diagLog('[native] ' + msg); } catch (e) {} }
+  dlog('bridge mulai');
+  /* Capacitor bisa terinisialisasi sesaat sesudah skrip halaman jalan:
+     jangan menyerah langsung kalau window.Capacitor belum ada — coba lagi
+     tiap 200 ms sampai ~10 detik. Tanpa ini, kalau runtime Capacitor
+     datang terlambat sedetik saja, bridge tidak pernah mulai dan audio
+     native tidak pernah aktif (tapi audio web tetap bunyi di depan,
+     jadi latar belakang gagal diam-diam). */
+  var tries = 0;
+  (function waitCap() {
+    var Cap = window.Capacitor;
+    if (Cap) { boot(Cap); return; }
+    tries++;
+    if (tries < 50) { setTimeout(waitCap, 200); return; }
+    dlog('bridge gagal: Capacitor tidak muncul');
+  })();
+
+  function boot(Cap) {
+    /* Bundle JS plugin (dist/plugin.js) tidak pernah dimuat di halaman
+       statis ini, jadi daftarkan plugin secara MANUAL lewat registerPlugin
+       bawaan core Capacitor: core membuat proxy-nya di Cap.Plugins dan
+       setiap panggilan metode diteruskan ke implementasi native lewat
+       PluginHeaders. Tanpa ini kedua plugin di bawah tidak ada dan bridge
+       berhenti di pemeriksaan berikutnya. */
+    try { if (typeof Cap.registerPlugin === 'function') { if (!Cap.Plugins) Cap.Plugins = {}; if (!Cap.Plugins.NativeAudio) Cap.registerPlugin('NativeAudio'); if (!Cap.Plugins.MediaSession) Cap.registerPlugin('MediaSession'); } } catch (e) {}
+    if (!Cap.Plugins || !Cap.Plugins.NativeAudio || !Cap.Plugins.MediaSession) { dlog('bridge gagal: plugin NativeAudio/MediaSession tidak ada'); return; }
+    var NA = Cap.Plugins.NativeAudio;
+    var MS = Cap.Plugins.MediaSession;
 
   function whenReady(cb) {
     var n = 0;
@@ -6859,8 +6873,14 @@
        menyembunyikannya; blok ini pengaman tambahan dari sisi bridge
        (bridge berjalan sesudah skrip utama). */
     try {
+      /* Hanya sembunyikan tombol PASANG PWA berdasarkan ID-nya. Jangan
+         sembunyikan [data-nav="download"]: tombol navigasi "Llvall App"
+         (menu samping + bilah bawah) memakai data-nav="download" dan
+         membuka halaman view-download — halaman setelan/diagnostik,
+         bukan prompt pemasangan. Kalau disembunyikan, halaman
+         "Llvall App" (termasuk panel "Notifikasi & putar latar" dan
+         diagnostik #diagLog) tidak bisa dibuka di aplikasi native. */
       ['pwaInstallBtn', 'pwaInstallBtn2', 'pwaInstallBtn3', 'iosInstallBtn'].forEach(function (id) { var b = document.getElementById(id); if (b) b.style.display = 'none'; });
-      Array.prototype.forEach.call(document.querySelectorAll('[data-nav="download"]'), function (b) { b.style.display = 'none'; });
       if (typeof openDownloadPrompt === 'function' && !openDownloadPrompt.__nativeGuard) {
         var _origDownloadPrompt = openDownloadPrompt;
         var _guardedDownloadPrompt = function () {
@@ -7117,6 +7137,7 @@
     }, 1000);
 
     dlog('bridge siap');
+  }
   }
 })();
 
