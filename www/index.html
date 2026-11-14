@@ -3614,7 +3614,7 @@
             rs: el ? el.readyState : null,
             dur: el ? (isFinite(el.duration) ? Math.round(el.duration) : String(el.duration)) : null,
             ct: el ? Math.round(el.currentTime || 0) : null,
-            ms: ("mediaSession" in navigator) ? navigator.mediaSession.playbackState : "n/a"
+            ms: ("mediaSession" in navigator) ? navigator.mediaSession.playbackState : (window.__lvalNative && typeof window.__lvalNative.isActive === "function" && window.__lvalNative.isActive() ? "native:" + (S.playing ? "playing" : "paused") : "n/a")
           });
           if (diagEvents.length > 30) diagEvents.shift();
           renderDiag();
@@ -3630,6 +3630,7 @@
         ).join("\n");
       }
       let errStreak = 0, streamSeq = 0, streamRetryFor = "", pendingStreamSeek = null;
+      let trackerRetry = {};
       /* Pilih satu stream audio dari daftar audioStreams Piped: utamakan
          M4A/AAC (jalan di semua browser, termasuk Safari iOS); cadangan
          Opus/WebM. Di dalam kelompok itu bitrate mengikuti pilihan
@@ -4071,6 +4072,26 @@
            menunggu penjaga macet untuknya berarti jeda yang terasa.
            Penjaga macet tetap menangkap kegagalan tanpa error. */
         if (candIdx > 0 && Date.now() - candStamp < 60) return;
+        /* PEMUTAR NATIVE SEDANG BUNYI UNTUK LAGU INI: URL yang dicoba terbukti bisa diputar (pemutar native ExoPlayer memutarnya), jadi error elemen web ini BUKAN kegagalan putar — elemen web hanyalah pelacak yang dibisukan, dan ia bisa gagal memuat URL yang sama karena gangguan jaringan sesaat / kekhasan WebView. JANGAN tandai URL ini mati, JANGAN pindah kandidat, JANGAN ambil ulang, dan yang paling penting JANGAN alih ke YouTube (mesin cadangan itu tidak bisa jalan di latar belakang, dan pengalihan itu mematikan audio native). Pulihkan saja pelacak web dengan memuat ulang URL yang sama (paling banyak 2x per lagu); kalau pelacak tetap tidak bisa, biarkan pemutar native yang bunyi. */
+        if (t && S.intentPlay && typeof window !== "undefined" && window.__lvalNative && typeof window.__lvalNative.isPlayingFor === "function" && window.__lvalNative.isPlayingFor(t.id)) {
+          if ((trackerRetry[t.id] || 0) < 2) {
+            trackerRetry[t.id] = (trackerRetry[t.id] || 0) + 1;
+            diagLog("pelacak-web-ulang");
+            const el = SX;
+            try { el.src = candList[candIdx] || el.getAttribute("src") || ""; el.load(); } catch (e) {}
+            S.loading = true; syncPlayUI();
+            const p = el.play();
+            if (p && p.catch) p.catch(() => {});
+            return;
+          }
+          /* Pelacak web tetap tidak bisa memuat, tapi native bunyi:
+             terima keadaan itu — lagu jalan lewat native, jangan
+             sentuh apa-apa lagi (jangan tandai URL mati, jangan
+             alih ke YouTube). */
+          S.loading = false; S.playing = true; syncPlayUI();
+          diagLog("pelacak-web-rusak");
+          return;
+        }
         S.loading = false;
         /* Catat kandidat yang baru saja mati: dinginkan instance
            asalnya dan keluarkan URL ini dari cache, supaya tidak
@@ -6812,7 +6833,7 @@ var capacitorExports=function(e){"use strict";var t;e.ExceptionCode=void 0,(t=e.
 
 </script>
 <script>
-/* === Llvall native bridge (v3, tidak diubah) === */
+/* === Llvall native bridge (v5) === */
 /* ============================================================
    Llvall native bridge (Capacitor Android only)
    ------------------------------------------------------------
@@ -6881,6 +6902,22 @@ var capacitorExports=function(e){"use strict";var t;e.ExceptionCode=void 0,(t=e.
     var curUrl = null, curAssetId = null, curTrackId = null;
     var nativeActive = false, nativePendingUrl = null, nativePendingAt = 0;
     var lastVol = null, lastRate = null, lastMetaKey = null;
+    /* Paparkan keadaan native ke skrip utama (baca-saja, untuk
+       menghalangi jalan memutar yang keliru): skrip utama perlu tahu
+       apakah pemutar native sedang BUNYI / sedang MEMULAI untuk lagu
+       ini, supaya error elemen web (pelacak yang dibisukan) tidak
+       mematikan audio native yang terbukti bisa diputar lalu
+       menyerahkan lagu ke YouTube — yang tidak bisa jalan di latar
+       belakang. isPlayingFor mencakup juga masa preload (pending):
+       selama native masih mencoba URL itu, jangan alih ke YouTube. */
+    try {
+      window.__lvalNative = {
+        isActive: function () { return !!(nativeActive || nativePendingUrl); },
+        isPlayingFor: function (trackId) { return !!(trackId != null && curTrackId === trackId && (nativeActive || nativePendingUrl)); },
+        url: function () { return curUrl; },
+        trackId: function () { return curTrackId; }
+      };
+    } catch (e) {}
 
     /* ---- 0. sembunyikan tawaran pemasangan PWA (jaring pengaman) ----
        Aplikasi native ini SUDAH terpasang, jadi tombol/sheet pemasangan
@@ -7075,7 +7112,16 @@ var capacitorExports=function(e){"use strict";var t;e.ExceptionCode=void 0,(t=e.
         try {
           if (typeof engine !== 'undefined' && engine !== 'stream') return;
           if (el !== SX) return;
-          if (typeof S !== 'undefined' && S.intentPlay && S.loading) return; // jeda transisi kandidat: abaikan
+          /* Jeda elemen web BUKAN selalu jeda pengguna: saat ganti
+             kandidat, saat serah-terima, dan saat elemen gagal memuat
+             URL (error) elemen juga menjeda — sementara niat putar
+             (intentPlay) tetap menyala dan pemutar native mungkin
+             sedang bunyi untuk lagu ini. HANYA jeda yang disengaja
+             pengguna (intentPlay=false) yang boleh menjeda native;
+             jeda lain diabaikan supaya native tidak ikut mati karena
+             error pelacak web. (Jeda saat ganti mesin tetap diurus
+             penjaga berkala lewat engine !== "stream".) */
+          if (typeof S !== 'undefined' && S.intentPlay) return;
           nativePause();
         } catch (e) {}
       });
