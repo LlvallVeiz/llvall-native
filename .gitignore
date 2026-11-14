@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+android/build/
+android/app/build/
+android/.gradle/
+android/app/.cxx/
+
+# Logs and OS files
+*.log
+.DS_Store

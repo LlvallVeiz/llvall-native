@@ -1,0 +1,10 @@
+[
+	{
+		"pkg": "@capgo/capacitor-media-session",
+		"classpath": "com.capgo.mediasession.MediaSessionPlugin"
+	},
+	{
+		"pkg": "@capgo/capacitor-native-audio",
+		"classpath": "ee.forgr.audio.NativeAudio"
+	}
+]
