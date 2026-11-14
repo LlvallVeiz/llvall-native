@@ -2767,6 +2767,19 @@
       const pwaNote = $("#pwaInstallNote");
       let deferredInstall = window.__lvalBIP || null;
       const navStandalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+      /* Berjalan di dalam aplikasi native (Capacitor Android): aplikasi ini
+         SUDAH terpasang, jadi tawaran pemasangan PWA tidak ada artinya di
+         sana — sembunyikan semua tombol pemasangannya dan matikan sheet-nya
+         (lihat penjaga di openDownloadPrompt). Di browser/PWA tidak ada
+         window.Capacitor, jadi blok ini tidak berbuat apa-apa dan alur
+         pemasangan web jalan persis seperti sebelumnya. */
+      const IS_NATIVE_APP = (() => { try { return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform()); } catch (e) { return false; } })();
+      function hideInstallForNative() {
+        if (!IS_NATIVE_APP) return;
+        [pwaBtn, pwaBtn2, pwaBtn3, iosBtn].forEach((b) => { if (b) b.style.display = "none"; });
+        $$('[data-nav="download"]').forEach((b) => { b.style.display = "none"; });
+      }
+      hideInstallForNative();
       function markInstalled() {
         installBtns.forEach((b) => { b.textContent = "Llvall sudah terpasang"; b.disabled = true; });
         if (iosBtn) { iosBtn.textContent = "Llvall sudah terpasang"; iosBtn.disabled = true; }
@@ -5671,6 +5684,7 @@
          standalone). Pola sheet, warna, dan tipografinya sama persis kayak
          sheet lain di aplikasi ini. */
       function openDownloadPrompt() {
+        if (IS_NATIVE_APP) return; /* aplikasi native sudah terpasang: sheet pemasangan PWA tidak pernah dibuka di sana */
         if (navStandalone || window.__lvalInstalled) return;
         const sh = $("#sheet");
         if (!sh || sh.classList.contains("open")) return;
@@ -6807,7 +6821,15 @@
    ============================================================ */
 (function () {
   var Cap = window.Capacitor;
-  if (!Cap || !Cap.Plugins || !Cap.Plugins.NativeAudio || !Cap.Plugins.MediaSession) return;
+  if (!Cap) return;
+  /* Bundle JS plugin (dist/plugin.js) tidak pernah dimuat di halaman
+     statis ini, jadi daftarkan plugin secara MANUAL lewat registerPlugin
+     bawaan core Capacitor: core membuat proxy-nya di Cap.Plugins dan
+     setiap panggilan metode diteruskan ke implementasi native lewat
+     PluginHeaders. Tanpa ini kedua plugin di bawah tidak ada dan bridge
+     berhenti di pemeriksaan berikutnya. */
+  try { if (typeof Cap.registerPlugin === 'function') { if (!Cap.Plugins) Cap.Plugins = {}; if (!Cap.Plugins.NativeAudio) Cap.registerPlugin('NativeAudio'); if (!Cap.Plugins.MediaSession) Cap.registerPlugin('MediaSession'); } } catch (e) {}
+  if (!Cap.Plugins || !Cap.Plugins.NativeAudio || !Cap.Plugins.MediaSession) return;
   var NA = Cap.Plugins.NativeAudio;
   var MS = Cap.Plugins.MediaSession;
   function noop() {}
@@ -6830,6 +6852,25 @@
     var curUrl = null, curAssetId = null, curTrackId = null;
     var nativeActive = false, nativePendingUrl = null, nativePendingAt = 0;
     var lastVol = null, lastRate = null, lastMetaKey = null;
+
+    /* ---- 0. sembunyikan tawaran pemasangan PWA (jaring pengaman) ----
+       Aplikasi native ini SUDAH terpasang, jadi tombol/sheet pemasangan
+       PWA tidak ada artinya di sini. Skrip utama halaman sudah
+       menyembunyikannya; blok ini pengaman tambahan dari sisi bridge
+       (bridge berjalan sesudah skrip utama). */
+    try {
+      ['pwaInstallBtn', 'pwaInstallBtn2', 'pwaInstallBtn3', 'iosInstallBtn'].forEach(function (id) { var b = document.getElementById(id); if (b) b.style.display = 'none'; });
+      Array.prototype.forEach.call(document.querySelectorAll('[data-nav="download"]'), function (b) { b.style.display = 'none'; });
+      if (typeof openDownloadPrompt === 'function' && !openDownloadPrompt.__nativeGuard) {
+        var _origDownloadPrompt = openDownloadPrompt;
+        var _guardedDownloadPrompt = function () {
+          try { if (Cap.isNativePlatform && Cap.isNativePlatform()) return; } catch (e) {}
+          return _origDownloadPrompt.apply(null, arguments);
+        };
+        _guardedDownloadPrompt.__nativeGuard = true;
+        openDownloadPrompt = _guardedDownloadPrompt;
+      }
+    } catch (e) {}
 
     /* ---- 1. konfigurasi audio native ----
        backgroundPlayback:true -> plugin melewati jeda otomatis saat
@@ -7079,6 +7120,6 @@
   }
 })();
 
-    </script>
+</script>
   </body>
 </html>
